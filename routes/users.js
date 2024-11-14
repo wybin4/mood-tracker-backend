@@ -4,6 +4,24 @@ const FriendRequest = require('../models/FriendRequest');
 const Vidget = require('../models/Vidget');
 const router = express.Router();
 
+router.post('/profile', async (req, res) => {
+  const { userId } = req.body; // Извлекаем userId из тела запроса
+
+  try {
+    const user = await User.findById(userId).select('_id name code'); // Ищем пользователя и возвращаем только _id, name и code
+
+    if (!user) {
+      return res.status(404).json({ message: 'Пользователь не найден' }); // Проверяем, если пользователь не найден
+    }
+
+    return res.status(200).json(user); // Возвращаем данные пользователя
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'Ошибка сервера' }); // Обрабатываем возможные ошибки
+  }
+});
+
+
 // Эндпоинт для отправки запроса на добавление в друзья
 router.post('/send-friend-request', async (req, res) => {
   const { userId, friendCode } = req.body;
@@ -13,6 +31,11 @@ router.post('/send-friend-request', async (req, res) => {
     const sender = await User.findById(userId);
     if (!sender) {
       return res.status(404).json({ message: 'Пользователь не найден' });
+    }
+
+    // Проверяем, что пользователь не отправляет запрос самому себе
+    if (sender.code === friendCode) {
+      return res.status(400).json({ message: 'Нельзя отправить запрос самому себе' });
     }
 
     // Находим пользователя по коду друга
@@ -43,11 +66,14 @@ router.post('/send-friend-request', async (req, res) => {
 });
 
 // Эндпоинт для получения входящих запросов на добавление в друзья
-router.get('/list-friend-requests', async (req, res) => {
+router.post('/list-friend-requests', async (req, res) => {
   const { userId } = req.body;
 
   try {
-    const requests = await FriendRequest.find({ to: userId, status: 'pending' }).populate('from', 'name code');
+    const requests = await FriendRequest.find({ to: userId, status: 'pending' })
+      .select('-status -createdAt')
+      .populate('from', 'name code');
+
     return res.status(200).json(requests);
   } catch (error) {
     console.error(error);
@@ -55,8 +81,9 @@ router.get('/list-friend-requests', async (req, res) => {
   }
 });
 
+
 // Эндпоинт для получения списка друзей
-router.get('/list-friends', async (req, res) => {
+router.post('/list-friends', async (req, res) => {
   const { userId } = req.body;
 
   try {
@@ -68,7 +95,7 @@ router.get('/list-friends', async (req, res) => {
 
     // Возвращаем имена друзей
     const friendsList = user.friends.map(friend => ({
-      id: friend._id,
+      _id: friend._id,
       name: friend.name,  // Получаем имя друга
     }));
     return res.status(200).json(friendsList); // Возвращаем список друзей
@@ -103,7 +130,7 @@ router.post('/remove-friend', async (req, res) => {
       userId: userId,
       friendId: friendId
     });
-    
+
     // Проверяем, нет ли уже активного запроса в обратном направлении
     const existingRequest = await FriendRequest.findOne({
       from: friendId,

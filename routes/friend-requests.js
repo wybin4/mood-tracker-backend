@@ -6,7 +6,7 @@ const router = express.Router();
 // Эндпоинт для принятия или отклонения запроса на добавление в друзья
 router.put('/handle', async (req, res) => {
   const { requestId, action } = req.body; // action может быть 'accept' или 'decline'
-
+  
   try {
     const request = await FriendRequest.findById(requestId);
     if (!request) {

@@ -1,5 +1,6 @@
 const LocalStrategy = require('passport-local').Strategy;
 const bcrypt = require('bcrypt');
+const passport = require('passport');
 
 // Использование LocalStrategy для проверки username и password
 passport.use(new LocalStrategy(async (username, password, done) => {
