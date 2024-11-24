@@ -1,52 +1,37 @@
 const express = require('express');
 const User = require('../models/User');
 const FriendRequest = require('../models/FriendRequest');
-const Vidget = require('../models/Vidget');
+const Widget = require('../models/Widget');
 const router = express.Router();
+const authMiddleware = require('../middlewares/authMiddleware');
 
-router.post('/profile', async (req, res) => {
-  const { userId } = req.body; // Извлекаем userId из тела запроса
-
+router.get('/profile', authMiddleware, async (req, res) => {
   try {
-    const user = await User.findById(userId).select('_id name code'); // Ищем пользователя и возвращаем только _id, name и code
-
-    if (!user) {
-      return res.status(404).json({ message: 'Пользователь не найден' }); // Проверяем, если пользователь не найден
-    }
-
-    return res.status(200).json(user); // Возвращаем данные пользователя
+    const { _id, name, code } = req.user;
+    return res.status(200).json({ _id, name, code });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ message: 'Ошибка сервера' }); // Обрабатываем возможные ошибки
+    return res.status(500).json({ message: 'Ошибка сервера' });
   }
 });
 
-
-// Эндпоинт для отправки запроса на добавление в друзья
-router.post('/send-friend-request', async (req, res) => {
-  const { userId, friendCode } = req.body;
+router.post('/send-friend-request', authMiddleware, async (req, res) => {
+  const { friendCode } = req.body;
 
   try {
-    // Находим пользователя, который отправляет запрос
-    const sender = await User.findById(userId);
-    if (!sender) {
-      return res.status(404).json({ message: 'Пользователь не найден' });
-    }
+    const user = req.user;
 
-    // Проверяем, что пользователь не отправляет запрос самому себе
-    if (sender.code === friendCode) {
+    if (user.code === friendCode) {
       return res.status(400).json({ message: 'Нельзя отправить запрос самому себе' });
     }
 
-    // Находим пользователя по коду друга
     const receiver = await User.findOne({ code: friendCode });
     if (!receiver) {
       return res.status(404).json({ message: 'Друг с указанным кодом не найден' });
     }
 
-    // Проверяем, не отправлен ли уже запрос
     const existingRequest = await FriendRequest.findOne({
-      from: sender._id,
+      from: user._id,
       to: receiver._id,
       status: 'pending',
     });
@@ -54,8 +39,7 @@ router.post('/send-friend-request', async (req, res) => {
       return res.status(400).json({ message: 'Запрос на добавление уже отправлен' });
     }
 
-    // Создаем новый запрос на добавление в друзья
-    const newRequest = new FriendRequest({ from: sender._id, to: receiver._id });
+    const newRequest = new FriendRequest({ from: user._id, to: receiver._id });
     await newRequest.save();
 
     return res.status(201).json({ message: 'Запрос на добавление в друзья отправлен' });
@@ -65,9 +49,8 @@ router.post('/send-friend-request', async (req, res) => {
   }
 });
 
-// Эндпоинт для получения входящих запросов на добавление в друзья
-router.post('/list-friend-requests', async (req, res) => {
-  const { userId } = req.body;
+router.get('/list-friend-requests', authMiddleware, async (req, res) => {
+  const userId = req.user._id;
 
   try {
     const requests = await FriendRequest.find({ to: userId, status: 'pending' })
@@ -81,64 +64,79 @@ router.post('/list-friend-requests', async (req, res) => {
   }
 });
 
-
-// Эндпоинт для получения списка друзей
-router.post('/list-friends', async (req, res) => {
-  const { userId } = req.body;
+router.get('/list-friends', authMiddleware, async (req, res) => {
+  const userId = req.user._id;
 
   try {
-    // Находим пользователя с заполнением друзей
-    const user = await User.findById(userId).populate('friends', 'name code'); // Заполняем поля 'name' и 'code' у друзей
+    const user = await User.findById(userId).populate('friends', 'name code');
     if (!user) {
       return res.status(404).json({ message: 'Пользователь не найден' });
     }
 
-    // Возвращаем имена друзей
     const friendsList = user.friends.map(friend => ({
       _id: friend._id,
-      name: friend.name,  // Получаем имя друга
+      name: friend.name,
     }));
-    return res.status(200).json(friendsList); // Возвращаем список друзей
+    return res.status(200).json(friendsList);
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: 'Ошибка сервера' });
   }
 });
 
-// Эндпоинт для удаления друга
-router.post('/remove-friend', async (req, res) => {
-  const { userId, friendId } = req.body;
+router.get('/list-friends-without-widgets', authMiddleware, async (req, res) => {
+  const userId = req.user._id;
 
   try {
-    // Находим пользователя и друга
-    const user = await User.findById(userId);
-    const friend = await User.findById(friendId);
-
-    if (!user || !friend) {
-      return res.status(404).json({ message: 'Пользователь или друг не найден' });
+    const user = await User.findById(userId).populate('friends', 'name code');
+    if (!user) {
+      return res.status(404).json({ message: 'Пользователь не найден' });
     }
 
-    // Удаляем друга из списка friends у пользователя
+    const friendsWithWidgets = await Widget.find({ userId: userId, friendId: { $ne: null } }).distinct('friendId');
+    const friendsWithoutWidgets = user.friends.filter(friend => !friendsWithWidgets.includes(friend._id.toString()));
+
+    const friendsList = friendsWithoutWidgets.map(friend => ({
+      _id: friend._id,
+      name: friend.name,
+    }));
+
+    return res.status(200).json(friendsList);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'Ошибка сервера' });
+  }
+});
+
+router.post('/remove-friend', authMiddleware, async (req, res) => {
+  const { friendId } = req.body;
+
+  try {
+    const userId = req.user._id;
+    const user = req.user;
+    const friend = await User.findById(friendId);
+
+    if (!friend) {
+      return res.status(404).json({ message: 'Друг не найден' });
+    }
+
     user.friends = user.friends.filter(id => id !== friendId);
     await user.save();
 
-    // Удаляем пользователя из списка друзей у друга
     friend.friends = friend.friends.filter(id => id !== userId);
     await friend.save();
 
-    await Vidget.deleteMany({
+    await Widget.deleteMany({
       userId: userId,
       friendId: friendId
     });
 
-    // Проверяем, нет ли уже активного запроса в обратном направлении
     const existingRequest = await FriendRequest.findOne({
       from: friendId,
       to: userId,
       status: 'pending'
     });
 
-    // Если запроса нет, создаем новый запрос от друга к пользователю (чтобы восстановить дружбу)
     if (!existingRequest) {
       const newRequest = new FriendRequest({
         from: friendId,

@@ -12,6 +12,7 @@ const defaultEventTypes = [
     { name: 'Отношения' },
     { name: 'Здоровье' },
     { name: 'Хобби' },
+    { name: 'Жизнь' },
 ];
 
 const initializeEventTypes = async () => {

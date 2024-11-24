@@ -4,18 +4,20 @@ const Event = require('../models/Event');
 const { MoodType } = require('../models/MoodType');
 const { EventType } = require('../models/EventType');
 const mongoose = require('mongoose');
-const { Mood } = require('../models/Mood'); // Импортируем модель Mood
+const { Mood } = require('../models/Mood');
+const User = require('../models/User');
 const { ObjectId } = mongoose.Types;
+const authMiddleware = require('../middlewares/authMiddleware');
 
-router.post('/add', async (req, res) => {
+router.post('/add', authMiddleware, async (req, res) => {
   const { eventType, name, description, mids } = req.body;
+  const userId = req.user._id;
 
   if (!eventType || !name || !mids) {
     return res.status(400).json({ message: 'eventType, name, and mids are required' });
   }
 
   try {
-    // Проверяем, существуют ли все идентификаторы настроений
     const existingMoods = await Mood.find({ _id: { $in: mids } });
     if (existingMoods.length !== mids.length) {
       return res.status(400).json({ message: 'Some mood ids do not exist' });
@@ -26,6 +28,7 @@ router.post('/add', async (req, res) => {
       name,
       description,
       mids,
+      userId,
     });
     await newEvent.save();
     return res.status(201).json(newEvent);
@@ -35,10 +38,8 @@ router.post('/add', async (req, res) => {
   }
 });
 
-// Эндпоинт для удаления отдельных событий
-router.delete('/delete', async (req, res) => {
-  const { ids } = req.body; // Получаем массив идентификаторов из тела запроса
-
+router.delete('/delete', authMiddleware, async (req, res) => {
+  const { ids } = req.body;
   if (!ids || !Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ message: 'IDs are required and must be an array' });
   }
@@ -53,13 +54,12 @@ router.delete('/delete', async (req, res) => {
   }
 });
 
-// Эндпоинт для удаления всех событий за сегодняшний день
-router.delete('/delete/today', async (req, res) => {
+router.delete('/delete/today', authMiddleware, async (req, res) => {
   try {
     const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0); // Начало дня
+    startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999); // Конец дня
+    endOfDay.setHours(23, 59, 59, 999);
 
     const deletedEvents = await Event.deleteMany({
       createdAt: {
@@ -74,74 +74,6 @@ router.delete('/delete/today', async (req, res) => {
     return res.status(500).json({ message: 'Ошибка сервера' });
   }
 });
-
-// router.get('/list', async (req, res) => {
-//   try {
-//     const events = await Event.aggregate([
-//       {
-//         $lookup: {
-//           from: "eventtypes",
-//           localField: "eventType",
-//           foreignField: "_id",
-//           as: "eventTypeDefault"
-//         }
-//       },
-//       {
-//         $lookup: {
-//           from: "moods",
-//           localField: "mids",
-//           foreignField: "_id",
-//           as: "moodDetails"
-//         }
-//       },
-//       {
-//         $lookup: {
-//           from: "moodtypes",
-//           localField: "moodDetails.moodTypeId",
-//           foreignField: "_id",
-//           as: "moodTypeDetails"
-//         }
-//       },
-//       {
-//         $project: {
-//           _id: 1,
-//           name: 1,
-//           description: 1,
-//           createdAt: 1,
-//           eventTypeNames: {
-//             $map: {
-//               input: "$eventTypeDefault",
-//               as: "eventType",
-//               in: "$$eventType.name"
-//             }
-//           },
-//           moods: {
-//             $map: {
-//               input: "$moodTypeDetails",
-//               as: "moodType",
-//               in: {
-//                 _id: "$$moodType._id",
-//                 name: "$$moodType.name",
-//                 details: {
-//                   $map: {
-//                     input: "$moodDetails",
-//                     as: "moodDetail",
-//                     in: "$$moodDetail.synonym"
-//                   }
-//                 }
-//               }
-//             }
-//           }
-//         }
-//       }
-//     ]);
-
-//     return res.status(200).json(events);
-//   } catch (error) {
-//     console.error(error);
-//     return res.status(500).json({ message: 'Ошибка сервера' });
-//   }
-// });
 
 function parseDate(input) {
   const formats = [
@@ -165,8 +97,9 @@ function parseDate(input) {
   return null;
 }
 
-router.post('/list/by-day', async (req, res) => {
+router.post('/list/by-day', authMiddleware, async (req, res) => {
   const { day } = req.body;
+  const userId = req.user._id.toString();
 
   if (!day) {
     return res.status(400).json({ message: 'Не указана дата' });
@@ -189,7 +122,8 @@ router.post('/list/by-day', async (req, res) => {
           createdAt: {
             $gte: startDate,
             $lt: endDate
-          }
+          },
+          userId
         }
       },
       {
@@ -236,7 +170,98 @@ router.post('/list/by-day', async (req, res) => {
   }
 });
 
-router.get('/get/:id', async (req, res) => {
+router.post('/list/by-today', authMiddleware, async (req, res) => {
+  const { friendId } = req.body;
+  const userId = req.user._id.toString();
+
+  try {
+    let targetUserId = userId;
+
+    if (friendId) {
+      const user = await User.findById(userId).select('friends').lean();
+
+      if (!user) {
+        return res.status(404).json({ message: 'Пользователь не найден' });
+      }
+
+      if (!user.friends.includes(friendId)) {
+        return res.status(403).json({ message: 'Указанный пользователь не является другом' });
+      }
+
+      targetUserId = friendId;
+    }
+
+    const startDate = new Date();
+    startDate.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(startDate);
+    endDate.setHours(23, 59, 59, 999);
+
+    const events = await Event.aggregate([
+      {
+        $match: {
+          createdAt: {
+            $gte: startDate,
+            $lt: endDate,
+          },
+          userId: targetUserId,
+        },
+      },
+      {
+        $lookup: {
+          from: 'moods',
+          localField: 'mids',
+          foreignField: '_id',
+          as: 'moodDetails',
+        },
+      },
+      {
+        $lookup: {
+          from: 'moodtypes',
+          localField: 'moodDetails.moodTypeId',
+          foreignField: '_id',
+          as: 'moodTypeDetails',
+        },
+      },
+      { $unwind: '$moodTypeDetails' },
+      {
+        $project: {
+          _id: 0,
+          moodTypeId: '$moodTypeDetails._id',
+          icon: '$moodTypeDetails.icon',
+          gradientColor: '$moodTypeDetails.gradientColor',
+          createdAt: 1
+        },
+      },
+      {
+        $sort: {
+          createdAt: -1
+        }
+      }
+    ]);
+
+    const moodMap = events.reduce((acc, item) => {
+      if (!acc[item.moodTypeId]) {
+        acc[item.moodTypeId] = { ...item, percent: 0 };
+      }
+      acc[item.moodTypeId].percent += 1;
+      return acc;
+    }, {});
+
+    const totalMoods = events.length;
+    const result = Object.values(moodMap).map((mood) => ({
+      ...mood,
+      percent: parseFloat(((mood.percent / totalMoods) * 100).toFixed(0)),
+    }));
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'Ошибка сервера' });
+  }
+});
+
+router.get('/get/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -246,7 +271,7 @@ router.get('/get/:id', async (req, res) => {
 
     const event = await Event.aggregate([
       {
-        $match: { _id: new ObjectId(id) }
+        $match: { _id: new ObjectId(id) },
       },
       {
         $lookup: {
@@ -318,7 +343,7 @@ router.get('/get/:id', async (req, res) => {
   }
 });
 
-router.get('/list-mood-types', async (req, res) => {
+router.get('/list-mood-types', authMiddleware, async (req, res) => {
   try {
     const moodTypesWithSynonyms = await MoodType.aggregate([
       {
@@ -358,9 +383,10 @@ router.get('/list-mood-types', async (req, res) => {
   }
 });
 
-router.post('/list-dates-with-events-for-week', async (req, res) => {
+router.post('/list-dates-with-events-for-week', authMiddleware, async (req, res) => {
   try {
     const { date } = req.body;
+    const userId = req.user._id.toString();
 
     const parsedDate = parseDate(date);
     if (!parsedDate) {
@@ -379,6 +405,7 @@ router.post('/list-dates-with-events-for-week', async (req, res) => {
       {
         $match: {
           createdAt: { $gte: startOfWeek, $lte: endOfWeek },
+          userId
         },
       },
       {
@@ -407,7 +434,7 @@ router.post('/list-dates-with-events-for-week', async (req, res) => {
 });
 
 
-router.get('/list-event-types', async (req, res) => {
+router.get('/list-event-types', authMiddleware, async (req, res) => {
   try {
     const eventTypes = await EventType.find();
     return res.status(200).json(eventTypes);

@@ -6,6 +6,7 @@ const EventSchema = new mongoose.Schema({
   description: { type: String, default: '' }, // Описание события (необязательное)
   mids: { type: [mongoose.Schema.Types.ObjectId], ref: 'Mood', required: true }, // Массив идентификаторов синонимов
   createdAt: { type: Date, default: Date.now }, // Дата создания
+  userId: { type: String, required: true },
 });
 
 const Event = mongoose.model('Event', EventSchema);

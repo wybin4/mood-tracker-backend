@@ -2,11 +2,11 @@ const express = require('express');
 const User = require('../models/User');
 const FriendRequest = require('../models/FriendRequest');
 const router = express.Router();
+const authMiddleware = require('../middlewares/authMiddleware');
 
-// Эндпоинт для принятия или отклонения запроса на добавление в друзья
-router.put('/handle', async (req, res) => {
-  const { requestId, action } = req.body; // action может быть 'accept' или 'decline'
-  
+router.put('/handle', authMiddleware, async (req, res) => {
+  const { requestId, action } = req.body;
+
   try {
     const request = await FriendRequest.findById(requestId);
     if (!request) {
@@ -14,7 +14,6 @@ router.put('/handle', async (req, res) => {
     }
 
     if (action === 'accept') {
-      // Добавляем пользователей друг к другу в друзья
       const sender = await User.findById(request.from);
       const receiver = await User.findById(request.to);
 
